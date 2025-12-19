@@ -45,7 +45,7 @@ st.sidebar.header("🎯 Navigation")
 page = st.sidebar.radio(
     "Go to",
     ["🏠 Home", "📊 Data Overview", "🧹 Data Cleaning", "📈 Visualizations", 
-     "🔍 Exploratory Analysis", "🤖 Model Training", "📊 Model Comparison", "🎯 Prediction"]
+     "🔍 Exploratory Analysis", "🤖 Model Training", "📊 Model Comparison"]
 )
 
 # Define numeric and binary columns
@@ -77,21 +77,47 @@ def load_data():
     except FileNotFoundError:
         return None
 
+# Detect outliers function - FIXED to handle data types
+def detect_outliers(df, numeric_cols):
+    outlier_info = {}
+    for col in numeric_cols:
+        if col in df.columns:
+            # Ensure column is numeric before calculating quantiles
+            try:
+                col_data = pd.to_numeric(df[col], errors='coerce')
+                col_data = col_data.dropna()  # Remove NaN values
+                
+                if len(col_data) > 0:
+                    Q1 = col_data.quantile(0.25)
+                    Q3 = col_data.quantile(0.75)
+                    IQR = Q3 - Q1
+                    lower = Q1 - 1.5 * IQR
+                    upper = Q3 + 1.5 * IQR
+                    outliers = col_data[(col_data < lower) | (col_data > upper)]
+                    outlier_info[col] = len(outliers)
+                else:
+                    outlier_info[col] = 0
+            except:
+                outlier_info[col] = 0
+    return outlier_info
+
 # Data cleaning function
 def clean_data(df):
     df_clean = df.copy()
     
-    # Convert to numeric
+    # Convert to numeric FIRST
     for col in NUMERIC_COLS:
         if col in df_clean.columns:
             df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
     
     # Impute missing values
     imputer = SimpleImputer(strategy='mean')
-    num_cols = df_clean.select_dtypes(include=['float64', 'int64']).columns
+    num_cols = df_clean.select_dtypes(include=['float64', 'int64']).columns.tolist()
     if 'Diagnosis' in num_cols:
-        num_cols = num_cols.drop('Diagnosis')
-    df_clean[num_cols] = imputer.fit_transform(df_clean[num_cols])
+        num_cols.remove('Diagnosis')
+    
+    if len(num_cols) > 0:
+        df_clean[num_cols] = imputer.fit_transform(df_clean[num_cols])
     
     # Drop unnecessary columns
     cols_to_drop = ['PatientID', 'DoctorInCharge', 'EducationLevel']
@@ -107,47 +133,45 @@ def clean_data(df):
     # Handle outliers (clip at 5th and 95th percentile)
     for col in NUMERIC_COLS:
         if col in df_clean.columns:
-            lower = df_clean[col].quantile(0.05)
-            upper = df_clean[col].quantile(0.95)
-            df_clean[col] = df_clean[col].clip(lower, upper)
+            try:
+                lower = df_clean[col].quantile(0.05)
+                upper = df_clean[col].quantile(0.95)
+                df_clean[col] = df_clean[col].clip(lower, upper)
+            except:
+                pass
     
     # Feature engineering
     if 'AlcoholConsumption' in df_clean.columns:
-        df_clean['Alcohol_level'] = pd.cut(
-            df_clean['AlcoholConsumption'],
-            bins=[0, 5, 10, 15, 20],
-            labels=['Low', 'Moderate', 'High', 'Very High']
-        )
+        try:
+            df_clean['Alcohol_level'] = pd.cut(
+                df_clean['AlcoholConsumption'],
+                bins=[0, 5, 10, 15, 20],
+                labels=['Low', 'Moderate', 'High', 'Very High']
+            )
+        except:
+            pass
     
     if 'BMI' in df_clean.columns:
-        df_clean['BMI_category'] = pd.cut(
-            df_clean['BMI'],
-            bins=[0, 18.5, 24.9, 29.9, 100],
-            labels=['Underweight', 'Normal', 'Overweight', 'Obese']
-        )
+        try:
+            df_clean['BMI_category'] = pd.cut(
+                df_clean['BMI'],
+                bins=[0, 18.5, 24.9, 29.9, 100],
+                labels=['Underweight', 'Normal', 'Overweight', 'Obese']
+            )
+        except:
+            pass
     
     if 'PhysicalActivity' in df_clean.columns:
-        df_clean['PA_level'] = pd.cut(
-            df_clean['PhysicalActivity'],
-            bins=[0, 3, 6, 10],
-            labels=['Low', 'Moderate', 'High']
-        )
+        try:
+            df_clean['PA_level'] = pd.cut(
+                df_clean['PhysicalActivity'],
+                bins=[0, 3, 6, 10],
+                labels=['Low', 'Moderate', 'High']
+            )
+        except:
+            pass
     
     return df_clean
-
-# Detect outliers function
-def detect_outliers(df, numeric_cols):
-    outlier_info = {}
-    for col in numeric_cols:
-        if col in df.columns:
-            Q1 = df[col].quantile(0.25)
-            Q3 = df[col].quantile(0.75)
-            IQR = Q3 - Q1
-            lower = Q1 - 1.5 * IQR
-            upper = Q3 + 1.5 * IQR
-            outliers = df[(df[col] < lower) | (df[col] > upper)]
-            outlier_info[col] = len(outliers)
-    return outlier_info
 
 # Load initial data
 if st.session_state.df_original is None:
@@ -217,7 +241,13 @@ elif page == "📊 Data Overview":
         col1.metric("📊 Total Rows", df.shape[0])
         col2.metric("📋 Total Columns", df.shape[1])
         col3.metric("❌ Missing Values", df.isnull().sum().sum())
-        col4.metric("🎯 Diagnosis Cases", df['Diagnosis'].sum() if 'Diagnosis' in df.columns else "N/A")
+        
+        # Safe diagnosis count
+        try:
+            diag_count = int(pd.to_numeric(df['Diagnosis'], errors='coerce').sum())
+            col4.metric("🎯 Diagnosis Cases", diag_count)
+        except:
+            col4.metric("🎯 Diagnosis Cases", "N/A")
         
         # Dataset Preview
         st.subheader("🔍 Dataset Preview")
@@ -243,7 +273,11 @@ elif page == "📊 Data Overview":
             
             st.subheader("📊 Value Counts (Diagnosis)")
             if 'Diagnosis' in df.columns:
-                st.write(df['Diagnosis'].value_counts())
+                try:
+                    diag_series = pd.to_numeric(df['Diagnosis'], errors='coerce')
+                    st.write(diag_series.value_counts().sort_index())
+                except:
+                    st.write(df['Diagnosis'].value_counts())
         
         # Statistical Summary
         st.subheader("📈 Statistical Summary")
@@ -266,7 +300,7 @@ elif page == "🧹 Data Cleaning":
     if st.session_state.df_original is None:
         st.error("❌ Please load the dataset first from the Data Overview page.")
     else:
-        df = st.session_state.df_original
+        df = st.session_state.df_original.copy()
         
         st.info("This process will: Convert data types → Impute missing values → Handle outliers → Engineer features")
         
@@ -276,12 +310,19 @@ elif page == "🧹 Data Cleaning":
             if not st.session_state.cleaning_done:
                 if st.button("🚀 Apply Data Cleaning", type="primary", use_container_width=True):
                     with st.spinner("Cleaning data... Please wait."):
-                        # Detect outliers before cleaning
+                        # Convert to numeric FIRST before outlier detection
+                        df_temp = df.copy()
+                        for col in NUMERIC_COLS:
+                            if col in df_temp.columns:
+                                df_temp[col] = pd.to_numeric(df_temp[col], errors='coerce')
+                        
+                        # Detect outliers AFTER conversion
                         st.subheader("🔍 Outlier Detection (Before Cleaning)")
-                        outliers_before = detect_outliers(df, NUMERIC_COLS)
+                        outliers_before = detect_outliers(df_temp, NUMERIC_COLS)
                         
                         outlier_df = pd.DataFrame(list(outliers_before.items()), 
                                                  columns=['Feature', 'Outlier Count'])
+                        outlier_df = outlier_df[outlier_df['Outlier Count'] > 0].sort_values('Outlier Count', ascending=False)
                         st.dataframe(outlier_df, use_container_width=True)
                         
                         # Clean data
@@ -319,7 +360,7 @@ elif page == "🧹 Data Cleaning":
                 st.write("**Columns Dropped:**")
                 dropped = ['PatientID', 'DoctorInCharge', 'EducationLevel']
                 for col in dropped:
-                    if col not in df_cleaned.columns:
+                    if col not in df_cleaned.columns and col in df.columns:
                         st.write(f"✓ {col}")
             
             with col3:
@@ -352,6 +393,12 @@ elif page == "📈 Visualizations":
     if df is None:
         st.error("❌ Please load the dataset first.")
     else:
+        # Make a copy and ensure numeric conversion
+        df_viz = df.copy()
+        for col in NUMERIC_COLS:
+            if col in df_viz.columns:
+                df_viz[col] = pd.to_numeric(df_viz[col], errors='coerce')
+        
         viz_type = st.selectbox(
             "🎨 Select Visualization Type",
             [
@@ -369,35 +416,43 @@ elif page == "📈 Visualizations":
         try:
             if viz_type == "Diagnosis Distribution":
                 fig, ax = plt.subplots(figsize=(8, 5))
-                sns.countplot(x="Diagnosis", data=df, ax=ax, palette="viridis")
+                diag_data = pd.to_numeric(df_viz['Diagnosis'], errors='coerce').dropna()
+                diag_counts = diag_data.value_counts().sort_index()
+                ax.bar(diag_counts.index.astype(str), diag_counts.values, color=['#2ecc71', '#e74c3c'])
                 ax.set_title("Distribution of Alzheimer Diagnosis", fontsize=16, fontweight='bold')
-                ax.set_xlabel("Diagnosis", fontsize=12)
+                ax.set_xlabel("Diagnosis (0=No, 1=Yes)", fontsize=12)
                 ax.set_ylabel("Count", fontsize=12)
-                for p in ax.patches:
-                    ax.annotate(f'{int(p.get_height())}', 
-                               (p.get_x() + p.get_width() / 2., p.get_height()),
-                               ha='center', va='bottom')
+                for i, v in enumerate(diag_counts.values):
+                    ax.text(i, v + 10, str(v), ha='center', fontweight='bold')
                 st.pyplot(fig)
                 plt.close()
             
             elif viz_type == "Age Distribution":
                 fig, ax = plt.subplots(figsize=(10, 5))
-                sns.histplot(data=df, x="Age", hue="Diagnosis", bins=30, kde=True, ax=ax, palette="coolwarm")
+                for diag in df_viz['Diagnosis'].unique():
+                    age_data = df_viz[df_viz['Diagnosis'] == diag]['Age'].dropna()
+                    ax.hist(age_data, bins=30, alpha=0.5, label=f'Diagnosis {diag}')
                 ax.set_title("Age Distribution by Diagnosis", fontsize=16, fontweight='bold')
+                ax.set_xlabel("Age")
+                ax.set_ylabel("Frequency")
+                ax.legend()
                 st.pyplot(fig)
                 plt.close()
             
             elif viz_type == "MMSE Box Plot":
                 fig, ax = plt.subplots(figsize=(8, 5))
-                sns.boxplot(x="Diagnosis", y="MMSE", data=df, ax=ax, palette="Set2")
+                df_viz_clean = df_viz[['Diagnosis', 'MMSE']].dropna()
+                df_viz_clean['Diagnosis'] = df_viz_clean['Diagnosis'].astype(str)
+                sns.boxplot(x="Diagnosis", y="MMSE", data=df_viz_clean, ax=ax, palette="Set2")
                 ax.set_title("MMSE Score vs Diagnosis", fontsize=16, fontweight='bold')
                 st.pyplot(fig)
                 plt.close()
             
             elif viz_type == "Correlation Heatmap":
-                fig, ax = plt.subplots(figsize=(18, 14))
-                corr = df.select_dtypes(include=[np.number]).corr()
-                sns.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", ax=ax, 
+                fig, ax = plt.subplots(figsize=(16, 12))
+                numeric_df = df_viz.select_dtypes(include=[np.number])
+                corr = numeric_df.corr()
+                sns.heatmap(corr, annot=False, fmt=".2f", cmap="coolwarm", ax=ax, 
                            cbar_kws={'label': 'Correlation Coefficient'})
                 ax.set_title("Feature Correlation Heatmap", fontsize=18, fontweight='bold')
                 st.pyplot(fig)
@@ -405,16 +460,26 @@ elif page == "📈 Visualizations":
             
             elif viz_type == "Smoking vs Diagnosis":
                 fig, ax = plt.subplots(figsize=(8, 5))
-                sns.barplot(x="Diagnosis", y="Smoking", data=df, palette="pastel", ax=ax)
-                ax.set_title("Smoking by Diagnosis", fontsize=16, fontweight='bold')
+                df_grouped = df_viz.groupby('Diagnosis')['Smoking'].mean().reset_index()
+                ax.bar(df_grouped['Diagnosis'].astype(str), df_grouped['Smoking'], color=['#3498db', '#e67e22'])
+                ax.set_title("Average Smoking Rate by Diagnosis", fontsize=16, fontweight='bold')
+                ax.set_xlabel("Diagnosis")
+                ax.set_ylabel("Smoking Rate")
                 st.pyplot(fig)
                 plt.close()
             
             elif viz_type == "Age vs MMSE Scatter":
                 fig, ax = plt.subplots(figsize=(10, 6))
-                sns.scatterplot(x="Age", y="MMSE", hue="Diagnosis", data=df, 
-                              palette="coolwarm", ax=ax, s=100, alpha=0.6)
+                df_scatter = df_viz[['Age', 'MMSE', 'Diagnosis']].dropna()
+                for diag in df_scatter['Diagnosis'].unique():
+                    subset = df_scatter[df_scatter['Diagnosis'] == diag]
+                    ax.scatter(subset['Age'], subset['MMSE'], label=f'Diagnosis {int(diag)}', 
+                             alpha=0.6, s=50)
                 ax.set_title("Age vs MMSE by Diagnosis", fontsize=16, fontweight='bold')
+                ax.set_xlabel("Age")
+                ax.set_ylabel("MMSE Score")
+                ax.legend()
+                ax.grid(True, alpha=0.3)
                 st.pyplot(fig)
                 plt.close()
             
@@ -424,32 +489,40 @@ elif page == "📈 Visualizations":
                 
                 for x_col, y_col in itertools.combinations(selected_cols, 2):
                     fig, ax = plt.subplots(figsize=(8, 5))
-                    sns.scatterplot(x=df[x_col], y=df[y_col], hue=df['Diagnosis'], 
-                                  palette='Set2', ax=ax, s=50, alpha=0.6)
+                    df_pair = df_viz[[x_col, y_col, 'Diagnosis']].dropna()
+                    for diag in df_pair['Diagnosis'].unique():
+                        subset = df_pair[df_pair['Diagnosis'] == diag]
+                        ax.scatter(subset[x_col], subset[y_col], label=f'Diagnosis {int(diag)}', 
+                                 alpha=0.5, s=30)
                     ax.set_title(f'Scatter Plot: {x_col} vs {y_col}', fontsize=14, fontweight='bold')
                     ax.set_xlabel(x_col, fontsize=12)
                     ax.set_ylabel(y_col, fontsize=12)
+                    ax.legend()
+                    ax.grid(True, alpha=0.3)
                     st.pyplot(fig)
                     plt.close()
             
             elif viz_type == "Line Plot (Feature Means)":
-                numeric_cols_present = [col for col in NUMERIC_COLS if col in df.columns]
-                df_mean = df.groupby('Diagnosis')[numeric_cols_present].mean().T
+                numeric_cols_present = [col for col in NUMERIC_COLS if col in df_viz.columns]
+                df_mean = df_viz.groupby('Diagnosis')[numeric_cols_present].mean().T
                 
                 fig, ax = plt.subplots(figsize=(14, 7))
                 for col in df_mean.columns:
-                    ax.plot(df_mean.index, df_mean[col], marker='o', label=f'Diagnosis {col}', linewidth=2)
+                    ax.plot(range(len(df_mean)), df_mean[col], marker='o', label=f'Diagnosis {int(col)}', linewidth=2)
                 ax.set_title('Line Plot of Numeric Features by Diagnosis', fontsize=16, fontweight='bold')
                 ax.set_xlabel('Features', fontsize=12)
                 ax.set_ylabel('Mean Values', fontsize=12)
+                ax.set_xticks(range(len(df_mean)))
                 ax.set_xticklabels(df_mean.index, rotation=90)
                 ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
                 ax.grid(True, alpha=0.3)
+                plt.tight_layout()
                 st.pyplot(fig)
                 plt.close()
         
         except Exception as e:
             st.error(f"Error creating visualization: {str(e)}")
+            st.write("Please ensure data is properly cleaned before visualizing.")
 
 # ==================== EXPLORATORY ANALYSIS PAGE ====================
 elif page == "🔍 Exploratory Analysis":
@@ -460,65 +533,100 @@ elif page == "🔍 Exploratory Analysis":
     if df is None:
         st.error("❌ Please load the dataset first.")
     else:
+        # Ensure numeric conversion
+        df_analysis = df.copy()
+        for col in NUMERIC_COLS + ['Diagnosis']:
+            if col in df_analysis.columns:
+                df_analysis[col] = pd.to_numeric(df_analysis[col], errors='coerce')
+        
         st.subheader("📊 Diagnosis Rate by Different Groups")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            if 'Gender' in df.columns:
+            if 'Gender' in df_analysis.columns:
                 st.write("**By Gender:**")
-                gender_analysis = df.groupby('Gender')['Diagnosis'].agg(['mean', 'count']) * [100, 1]
-                gender_analysis.columns = ['Diagnosis Rate (%)', 'Count']
-                st.dataframe(gender_analysis, use_container_width=True)
+                try:
+                    gender_analysis = df_analysis.groupby('Gender')['Diagnosis'].agg(['mean', 'count'])
+                    gender_analysis['mean'] = gender_analysis['mean'] * 100
+                    gender_analysis.columns = ['Diagnosis Rate (%)', 'Count']
+                    st.dataframe(gender_analysis, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Could not analyze by Gender: {str(e)}")
             
-            if 'Smoking' in df.columns:
+            if 'Smoking' in df_analysis.columns:
                 st.write("**By Smoking Status:**")
-                smoking_analysis = df.groupby('Smoking')['Diagnosis'].agg(['mean', 'count']) * [100, 1]
-                smoking_analysis.columns = ['Diagnosis Rate (%)', 'Count']
-                st.dataframe(smoking_analysis, use_container_width=True)
+                try:
+                    smoking_analysis = df_analysis.groupby('Smoking')['Diagnosis'].agg(['mean', 'count'])
+                    smoking_analysis['mean'] = smoking_analysis['mean'] * 100
+                    smoking_analysis.columns = ['Diagnosis Rate (%)', 'Count']
+                    st.dataframe(smoking_analysis, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Could not analyze by Smoking: {str(e)}")
             
-            if 'FamilyHistoryAlzheimers' in df.columns:
+            if 'FamilyHistoryAlzheimers' in df_analysis.columns:
                 st.write("**By Family History:**")
-                family_analysis = df.groupby('FamilyHistoryAlzheimers')['Diagnosis'].agg(['mean', 'count']) * [100, 1]
-                family_analysis.columns = ['Diagnosis Rate (%)', 'Count']
-                st.dataframe(family_analysis, use_container_width=True)
+                try:
+                    family_analysis = df_analysis.groupby('FamilyHistoryAlzheimers')['Diagnosis'].agg(['mean', 'count'])
+                    family_analysis['mean'] = family_analysis['mean'] * 100
+                    family_analysis.columns = ['Diagnosis Rate (%)', 'Count']
+                    st.dataframe(family_analysis, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Could not analyze by Family History: {str(e)}")
         
         with col2:
-            if 'Alcohol_level' in df.columns:
+            if 'Alcohol_level' in df_analysis.columns:
                 st.write("**By Alcohol Consumption Level:**")
-                alcohol_analysis = df.groupby('Alcohol_level')['Diagnosis'].agg(['mean', 'count']) * [100, 1]
-                alcohol_analysis.columns = ['Diagnosis Rate (%)', 'Count']
-                st.dataframe(alcohol_analysis, use_container_width=True)
+                try:
+                    alcohol_analysis = df_analysis.groupby('Alcohol_level')['Diagnosis'].agg(['mean', 'count'])
+                    alcohol_analysis['mean'] = alcohol_analysis['mean'] * 100
+                    alcohol_analysis.columns = ['Diagnosis Rate (%)', 'Count']
+                    st.dataframe(alcohol_analysis, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Could not analyze by Alcohol level: {str(e)}")
             
-            if 'BMI_category' in df.columns:
+            if 'BMI_category' in df_analysis.columns:
                 st.write("**By BMI Category:**")
-                bmi_analysis = df.groupby('BMI_category')['Diagnosis'].agg(['mean', 'count']) * [100, 1]
-                bmi_analysis.columns = ['Diagnosis Rate (%)', 'Count']
-                st.dataframe(bmi_analysis, use_container_width=True)
+                try:
+                    bmi_analysis = df_analysis.groupby('BMI_category')['Diagnosis'].agg(['mean', 'count'])
+                    bmi_analysis['mean'] = bmi_analysis['mean'] * 100
+                    bmi_analysis.columns = ['Diagnosis Rate (%)', 'Count']
+                    st.dataframe(bmi_analysis, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Could not analyze by BMI category: {str(e)}")
             
-            if 'PA_level' in df.columns:
+            if 'PA_level' in df_analysis.columns:
                 st.write("**By Physical Activity Level:**")
-                pa_analysis = df.groupby('PA_level')['Diagnosis'].agg(['mean', 'count']) * [100, 1]
-                pa_analysis.columns = ['Diagnosis Rate (%)', 'Count']
-                st.dataframe(pa_analysis, use_container_width=True)
+                try:
+                    pa_analysis = df_analysis.groupby('PA_level')['Diagnosis'].agg(['mean', 'count'])
+                    pa_analysis['mean'] = pa_analysis['mean'] * 100
+                    pa_analysis.columns = ['Diagnosis Rate (%)', 'Count']
+                    st.dataframe(pa_analysis, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Could not analyze by PA level: {str(e)}")
         
         # Age-based analysis
-        if 'Age' in df.columns:
+        if 'Age' in df_analysis.columns:
             st.subheader("📊 Age-Based Analysis")
-            df['Age_Group'] = pd.cut(df['Age'], bins=[0, 50, 60, 70, 80, 100], 
-                                     labels=['<50', '50-60', '60-70', '70-80', '80+'])
-            age_analysis = df.groupby('Age_Group')['Diagnosis'].agg(['mean', 'count']) * [100, 1]
-            age_analysis.columns = ['Diagnosis Rate (%)', 'Count']
-            st.dataframe(age_analysis, use_container_width=True)
-            
-            fig, ax = plt.subplots(figsize=(10, 5))
-            age_analysis['Diagnosis Rate (%)'].plot(kind='bar', ax=ax, color='steelblue')
-            ax.set_title('Diagnosis Rate by Age Group', fontsize=14, fontweight='bold')
-            ax.set_ylabel('Diagnosis Rate (%)')
-            ax.set_xlabel('Age Group')
-            plt.xticks(rotation=45)
-            st.pyplot(fig)
-            plt.close()
+            try:
+                df_analysis['Age_Group'] = pd.cut(df_analysis['Age'], 
+                                                   bins=[0, 50, 60, 70, 80, 100], 
+                                                   labels=['<50', '50-60', '60-70', '70-80', '80+'])
+                age_analysis = df_analysis.groupby('Age_Group')['Diagnosis'].agg(['mean', 'count'])
+                age_analysis['mean'] = age_analysis['mean'] * 100
+                age_analysis.columns = ['Diagnosis Rate (%)', 'Count']
+                st.dataframe(age_analysis, use_container_width=True)
+                
+                fig, ax = plt.subplots(figsize=(10, 5))
+                age_analysis['Diagnosis Rate (%)'].plot(kind='bar', ax=ax, color='steelblue')
+                ax.set_title('Diagnosis Rate by Age Group', fontsize=14, fontweight='bold')
+                ax.set_ylabel('Diagnosis Rate (%)')
+                ax.set_xlabel('Age Group')
+                plt.xticks(rotation=45)
+                st.pyplot(fig)
+                plt.close()
+            except Exception as e:
+                st.warning(f"Could not create age-based analysis: {str(e)}")
 
 # ==================== MODEL TRAINING PAGE ====================
 elif page == "🤖 Model Training":
@@ -527,7 +635,7 @@ elif page == "🤖 Model Training":
     if not st.session_state.cleaning_done:
         st.warning("⚠️ Please clean the data first from the Data Cleaning page.")
     else:
-        df = st.session_state.df_cleaned
+        df = st.session_state.df_cleaned.copy()
         
         model_type = st.selectbox(
             "🔧 Select Model",
@@ -644,6 +752,8 @@ elif page == "🤖 Model Training":
                 
                 except Exception as e:
                     st.error(f"❌ Error during training: {str(e)}")
+                    import traceback
+                    st.text(traceback.format_exc())
 
 # ==================== MODEL COMPARISON PAGE ====================
 elif page == "📊 Model Comparison":
@@ -700,44 +810,6 @@ elif page == "📊 Model Comparison":
         best_model = comparison_df.iloc[0]['Model']
         st.success(f"🏆 Best Model: **{best_model}** with accuracy of **{comparison_df.iloc[0]['Accuracy']:.4f}**")
 
-# ==================== PREDICTION PAGE ====================
-elif page == "🎯 Prediction":
-    st.header("🎯 Make Predictions")
-    
-    if not st.session_state.models_trained:
-        st.warning("⚠️ No models have been trained yet. Please train models from the Model Training page.")
-    else:
-        st.info("Enter patient information below to predict Alzheimer's diagnosis.")
-        
-        selected_model = st.selectbox("Select Model", list(st.session_state.models_trained.keys()))
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            age = st.number_input("Age", 50, 100, 65)
-            bmi = st.number_input("BMI", 15.0, 40.0, 25.0)
-            smoking = st.selectbox("Smoking", [0, 1], format_func=lambda x: "Yes" if x else "No")
-            alcohol = st.slider("Alcohol Consumption", 0, 20, 5)
-            
-        with col2:
-            physical_activity = st.slider("Physical Activity", 0, 10, 5)
-            diet_quality = st.slider("Diet Quality", 0, 10, 5)
-            sleep_quality = st.slider("Sleep Quality", 4, 10, 7)
-            mmse = st.slider("MMSE Score", 0, 30, 25)
-            
-        with col3:
-            family_history = st.selectbox("Family History", [0, 1], 
-                                         format_func=lambda x: "Yes" if x else "No")
-            diabetes = st.selectbox("Diabetes", [0, 1], 
-                                   format_func=lambda x: "Yes" if x else "No")
-            depression = st.selectbox("Depression", [0, 1], 
-                                     format_func=lambda x: "Yes" if x else "No")
-            hypertension = st.selectbox("Hypertension", [0, 1], 
-                                       format_func=lambda x: "Yes" if x else "No")
-        
-        if st.button("🔮 Predict", type="primary", use_container_width=True):
-            st.info("Prediction feature is ready! You can extend this with the actual prediction logic using the trained model.")
-            st.success("✅ Model loaded successfully!")
 
 # Footer
 st.markdown("---")
